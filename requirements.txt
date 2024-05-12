@@ -5,3 +5,6 @@ tk
 regex
 time
 urllib3
+pil
+io
+os
