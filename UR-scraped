@@ -1,63 +1,96 @@
 #!/usr/bin/env python
 
 import tkinter as tk
-from tkinter import scrolledtext
-from tkinter import messagebox
-from selenium import webdriver  # Import Selenium
+from tkinter import scrolledtext, messagebox, filedialog
+from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
-import regex  # Import regex library for advanced pattern matching
 from urllib.parse import urljoin
-import time  # Import the time module
+import regex
+import logging
+import time
+import os
+import threading
 
 # Maximum recursion depth for fetching data from linked pages
-DEFAULT_MAX_DEPTH = 5
+DEFAULT_MAX_DEPTH = ""
+
+# Set up logging to a file
+logging.basicConfig(filename='scraping.log', level=logging.WARNING,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Global variables
+output_folder = ""
+displayed_data = ""
+stop_fetching = False
+
+# Function to update console text
+def update_console_text():
+    try:
+        # Read the contents of the log file
+        with open('scraping.log', 'r') as log_file:
+            log_contents = log_file.read()
+
+        # Insert the log contents into the console_text widget
+        console_text.delete('1.0', tk.END)
+        console_text.insert(tk.END, log_contents)
+        console_text.see(tk.END)  # Scroll to the bottom
+    except Exception as e:
+                logging.error(f"An error occurred while updating console text: {e}")
 
 def fetch_data(url, max_depth, visited_urls=set(), depth=0):
+    global displayed_data, stop_fetching
     try:
         # Limit recursion depth to avoid opening too many files
-        if depth > max_depth:
-            return
+        if depth > max_depth or stop_fetching:
+            return ''
 
-        # Add the URL to the set of visited URLs
+        visited_urls = set()  # Initialize visited_urls as a set
         visited_urls.add(url)
 
-        # Provide user feedback
-        text_area.insert(tk.END, f"Fetching data from {url}...\n")
+
+
+        # Log message
+        logging.debug(f"Fetching data from {url}...")
 
         # Use Selenium to get dynamic content
-        service = Service('path_to_chromedriver')  # Update with your ChromeDriver path
+        chrome_driver_path = os.path.join(os.path.dirname(__file__), "chromedriver")
+        service = Service(chrome_driver_path)
         service.start()
-        driver = webdriver.Remote(service.service_url)
+        driver = webdriver.Chrome(service=service)
         driver.get(url)
-        time.sleep(2)  # Allow time for page to load (adjust as needed)
+        # Add explicit wait logic here if needed
 
         # Extract HTML content after page fully loads
+        time.sleep(2)  # Let's add a delay to ensure the page fully loads
         html_content = driver.page_source
-        driver.quit()  # Quit the Selenium WebDriver
+        driver.quit()
 
         soup = BeautifulSoup(html_content, 'html.parser')
-        text = soup.get_text(separator='\n', strip=True)  # Extract text from HTML content
-        cleaned_text = clean_text(text)  # Clean and format the text
-        extracted_data = extract_data(cleaned_text)  # Call function from second script
-        display_data(extracted_data)  # Display the extracted data in the text area
+        text = soup.get_text(separator='\n', strip=True)  
+        cleaned_text = clean_text(text)  
+        extracted_data = extract_data(cleaned_text)
+        displayed_data += f"\n\nData from {url}:\n{extracted_data}"
+        display_data(displayed_data) 
 
         # Find all anchor tags (links) on the page
         links = soup.find_all('a', href=True)
         for link in links:
             absolute_url = urljoin(url, link['href'])
             if absolute_url not in visited_urls:
-                fetch_data(absolute_url, max_depth, visited_urls, depth + 1)  # Recursively fetch data from the links
+                fetch_data(absolute_url, max_depth, visited_urls, depth + 1)
 
-        # Add a wait time of 4 seconds between each page scrape
-        time.sleep(2)
+
+        time.sleep(2)  
+        return extracted_data
 
     except Exception as e:
+        logging.error(f"An error occurred: {str(e)}")
         messagebox.showerror("Error", f"An error occurred: {str(e)}")
+        return ''
 
 def clean_text(text):
-    # Remove unwanted characters and extra whitespaces
-    cleaned_text = ' '.join(text.split())  # Remove extra whitespaces
+    cleaned_text = ' '.join(text.split()) 
     return cleaned_text
 
 def extract_data(text):
@@ -68,7 +101,6 @@ def extract_data(text):
     phones = extract_phones(text) if phone_check_var.get() else []
     names = extract_names(text) if name_check_var.get() else []
     tables = extract_tables(text) if table_check_var.get() else []
-    # You can further process the extracted data as needed
     extracted_data = f"SSNs: {ssns}\n\nEmails: {emails}\n\nAddresses: {addresses}\n\nPhone Numbers: {phones}\n\nPossible Names: {names}\n\nTables: {tables}"
     return extracted_data
 
@@ -122,9 +154,48 @@ def extract_tables(text):
 
     return table_data
 
+output_folder = ""
+
+def browse_folder():
+    try:
+        output_folder = filedialog.askdirectory()
+    except Exception as e:
+        logging.error(f"An error occurred while browsing folder: {str(e)}")
+
+def fetch_and_display_data():
+    try:
+        # Fetch data
+        fetch_thread = threading.Thread(target=fetch_data_thread)
+        fetch_thread.start()
+    except Exception as e:
+        logging.error(f"An error occurred while fetching and displaying data: {str(e)}")
+        messagebox.showerror("Error", f"An error occurred: {str(e)}")
+
+def fetch_data_thread():
+    global displayed_data
+    # Reset displayed_data and stop_fetching flag
+    displayed_data = ""
+    stop_fetching = False
+
+    fetched_data = fetch_data(url_entry.get(), int(depth_entry.get()))
+    if fetched_data is not None:
+        # Display fetched data
+        display_data(fetched_data)
+    else:
+        # Handle the case when fetch_data returns None
+        messagebox.showerror("Error", "Failed to fetch data.")
+
+def stop_and_display_data():
+    global stop_fetching
+    stop_fetching = True
+    
 def display_data(data):
-    text_area.delete('1.0', tk.END)
-    text_area.insert(tk.END, data)
+    try:
+        text_area.delete('1.0', tk.END)
+        text_area.insert(tk.END, data)
+    except Exception as e:
+        logging.error(f"An error occurred while displaying data: {str(e)}")
+        messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
 # Create the main window
 root = tk.Tk()
@@ -135,7 +206,7 @@ top_choice_label = tk.Label(root, text="UR-Scraped", bg="red", fg="black", font=
 top_choice_label.pack(fill=tk.X)
 
 # Create a frame for choice-related widgets with light blue background
-choice_frame = tk.Frame(root, bg="#ADD8E6")  # Same shade of blue
+choice_frame = tk.Frame(root, bg="#ADD8E6")  
 choice_frame.pack(padx=10, pady=10)
 
 # Create and place widgets inside the frame
@@ -144,7 +215,7 @@ depth_label.grid(row=0, column=0, sticky="w")
 
 depth_entry = tk.Entry(choice_frame, width=5)
 depth_entry.grid(row=0, column=1, padx=(0, 10))
-depth_entry.insert(0, DEFAULT_MAX_DEPTH)
+depth_entry.insert(0, "5")
 
 url_label = tk.Label(choice_frame, text="Enter URL:")
 url_label.grid(row=0, column=2, sticky="w")
@@ -152,35 +223,52 @@ url_label.grid(row=0, column=2, sticky="w")
 url_entry = tk.Entry(choice_frame, width=50)
 url_entry.grid(row=0, column=3)
 
-ssn_check_var = tk.IntVar()  # Variable to store the SSN checkbox state
-ssn_check = tk.Checkbutton(choice_frame, text="Extract SSNs", variable=ssn_check_var, bg="#ADD8E6")  # Light blue
+ssn_check_var = tk.BooleanVar()  
+email_check_var = tk.BooleanVar()  
+address_check_var = tk.BooleanVar()  
+phone_check_var = tk.BooleanVar()  
+name_check_var = tk.BooleanVar()  
+table_check_var = tk.BooleanVar()  
+
+ssn_check = tk.Checkbutton(choice_frame, text="Extract SSNs", variable=ssn_check_var, bg="#ADD8E6")  
 ssn_check.grid(row=1, column=0, sticky="w")
 
-email_check_var = tk.IntVar()  # Variable to store the email checkbox state
-email_check = tk.Checkbutton(choice_frame, text="Extract Emails", variable=email_check_var, bg="#ADD8E6")  # Light blue
+email_check = tk.Checkbutton(choice_frame, text="Extract Emails", variable=email_check_var, bg="#ADD8E6")  
 email_check.grid(row=1, column=1, sticky="w")
 
-address_check_var = tk.IntVar()  # Variable to store the address checkbox state
-address_check = tk.Checkbutton(choice_frame, text="Extract Addresses", variable=address_check_var, bg="#ADD8E6")  # Light blue
+address_check = tk.Checkbutton(choice_frame, text="Extract Addresses", variable=address_check_var, bg="#ADD8E6")  
 address_check.grid(row=1, column=2, sticky="w")
 
-phone_check_var = tk.IntVar()  # Variable to store the phone checkbox state
-phone_check = tk.Checkbutton(choice_frame, text="Extract Phone Numbers", variable=phone_check_var, bg="#ADD8E6")  # Light blue
+phone_check = tk.Checkbutton(choice_frame, text="Extract Phone Numbers", variable=phone_check_var, bg="#ADD8E6")  
 phone_check.grid(row=2, column=0, sticky="w")
 
-name_check_var = tk.IntVar()  # Variable to store the name checkbox state
-name_check = tk.Checkbutton(choice_frame, text="Extract Possible Names", variable=name_check_var, bg="#ADD8E6")  # Light blue
+name_check = tk.Checkbutton(choice_frame, text="Extract Possible Names", variable=name_check_var, bg="#ADD8E6")  
 name_check.grid(row=2, column=1, sticky="w")
 
-table_check_var = tk.IntVar()  # Variable to store the table checkbox state
-table_check = tk.Checkbutton(choice_frame, text="Extract Tables", variable=table_check_var, bg="#ADD8E6")  # Light blue
+table_check = tk.Checkbutton(choice_frame, text="Extract Tables", variable=table_check_var, bg="#ADD8E6")  
 table_check.grid(row=2, column=2, sticky="w")
 
-fetch_button = tk.Button(choice_frame, text="Fetch Data Press Twice", command=lambda: fetch_data(url_entry.get(), int(depth_entry.get())), bg="#ADD8E6")  # Light blue
-fetch_button.grid(row=3, column=0, columnspan=3)
+browse_button = tk.Button(choice_frame, text="Browse Output Folder", command=browse_folder, bg="#ADD8E6")  
+browse_button.grid(row=3, column=0, columnspan=3)
 
-text_area = scrolledtext.ScrolledText(root, width=80, height=40)
+fetch_button = tk.Button(choice_frame, text="Fetch Data Press Twice", command=fetch_and_display_data, bg="#ADD8E6")
+fetch_button.grid(row=4, column=0, columnspan=3)
+
+stop_display_button = tk.Button(choice_frame, text="Stop and Display Data", command=stop_and_display_data, bg="red")
+stop_display_button.grid(row=4, column=4, columnspan=3, pady=(10, 0))
+
+text_area = scrolledtext.ScrolledText(root, width=80, height=20)
 text_area.pack()
 
-# Run the main event loop
+console_frame = tk.Frame(root, bg="#DDDDDD", padx=5, pady=5)
+console_frame.pack(fill=tk.BOTH, expand=True)
+console_label = tk.Label(console_frame, text="Console Logging:", bg="#DDDDDD")
+console_label.pack(side=tk.TOP, anchor="w")
+console_text = scrolledtext.ScrolledText(console_frame, bg="black", fg="white")
+console_text.pack(fill=tk.BOTH, expand=True)
+
+# Update console text initially
+update_console_text()
+
+# Run the GUI
 root.mainloop()
